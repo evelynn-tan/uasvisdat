@@ -281,9 +281,11 @@ def buat_peta(g: gpd.GeoDataFrame) -> folium.Map:
     t["kat_RLS"], t["w_RLS"] = kategori(t["RLS"], BIN_RLS, LABEL_RLS, WARNA_RLS)
     t["w_LISA"] = t["lisa_kat"].map(WARNA_LISA)
 
-    m = folium.Map(location=[-2.5, 118], zoom_start=5,
-                   tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
-                   attr="Tiles &copy; Esri", control_scale=True, prefer_canvas=True)
+    m = folium.Map(location=[-2.5, 118], zoom_start=5, tiles=None,
+                   control_scale=True, prefer_canvas=True)
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
+        attr="Tiles &copy; Esri", name="Peta dasar (Esri)", control=False).add_to(m)  # control=False: tidak tampil di daftar layer
 
     kolom = ["KDPKAB", *FIELDS, "w_PPM", "w_TPT", "w_IPM", "w_RLS", "w_LISA", "geometry"]
     data = t[kolom]
