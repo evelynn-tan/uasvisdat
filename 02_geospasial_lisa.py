@@ -436,7 +436,48 @@ def _persen(a, b):
     return a / b * 100 if b else 0.0
 
 
-def grafik_treemap_bbm():
+# ---------- pengelompokan provinsi -> pulau (untuk dropdown) ----------
+URUTAN_PULAU = ["Sumatera", "Jawa", "Bali dan Nusa Tenggara", "Kalimantan",
+                "Sulawesi", "Maluku", "Papua"]
+SEMUA = "Seluruh Indonesia (per provinsi)"
+PER_PULAU = "Ringkasan per pulau"
+PILIHAN_TAMPILAN = [SEMUA, PER_PULAU] + URUTAN_PULAU
+
+
+def _pulau(prov: str) -> str:
+    u = " ".join(str(prov).upper().split())
+    if "PAPUA" in u:
+        return "Papua"
+    if "MALUKU" in u:
+        return "Maluku"
+    if "KALIMANTAN" in u:
+        return "Kalimantan"
+    if "SULAWESI" in u:
+        return "Sulawesi"
+    if "NUSA TENGGARA" in u or u == "BALI":
+        return "Bali dan Nusa Tenggara"
+    if any(k in u for k in ("JAWA", "JAKARTA", "YOGYAKARTA", "BANTEN")):
+        return "Jawa"
+    if any(k in u for k in ("SUMATERA", "ACEH", "RIAU", "JAMBI", "BENGKULU", "LAMPUNG", "BANGKA")):
+        return "Sumatera"
+    return "Lainnya"
+
+
+def _grup_tampilan(d: pd.DataFrame, tampilan: str):
+    """Kembalikan (label akar, [(pulau atau None, subset data), ...]) sesuai pilihan dropdown."""
+    d = d.assign(pulau=d["prov"].map(_pulau))
+    tak_dikenal = d.loc[d["pulau"] == "Lainnya", "prov"].tolist()
+    if tak_dikenal:
+        print("Provinsi belum terpetakan ke pulau:", tak_dikenal)
+    if tampilan == PER_PULAU:
+        return "Indonesia", [(p, d[d["pulau"] == p]) for p in URUTAN_PULAU + ["Lainnya"]
+                             if (d["pulau"] == p).any()]
+    if tampilan in URUTAN_PULAU:
+        return tampilan, [(None, d[d["pulau"] == tampilan])]
+    return "Indonesia", [(None, d)]
+
+
+def grafik_treemap_bbm(tampilan: str = SEMUA):
     # Sheet3 berisi persen x jumlah RT (skala 100x) -> dibagi 100 agar jadi jumlah RT
     d = _baca_data("bahan_bakar_2022",
                    ["prov", "Listrik", "Gas/Elpiji", "Minyak Tanah", "Arang/Briket", "Kayu", "Lainnya"],
@@ -451,65 +492,86 @@ def grafik_treemap_bbm():
         kotor = x[["Minyak Tanah", "Arang/Briket", "Kayu"]].sum()
         return _persen(kotor, kotor + x[["Listrik", "Gas/Elpiji"]].sum())
 
+    akar, grup = _grup_tampilan(d, tampilan)
+    semua = pd.concat([sub for _, sub in grup])
     t = _Pohon()
-    tot = d[list(KEL)].sum()
-    t.tambah("ID", "Indonesia", "", tot.sum(), pct_kotor(tot), 0)
-    for _, r in d.iterrows():
-        p, pk = r["prov"], pct_kotor(r)
-        t.tambah(p, p, "ID", r[list(KEL)].sum(), pk, 0)
-        for kel in ["Bersih", "Kotor", "Tidak memasak"]:
-            jenis = [j for j, k in KEL.items() if k == kel]
-            t.tambah(f"{p}|{kel}", kel, p, r[jenis].sum(), pk, 0)
-            for j in jenis:
-                t.tambah(f"{p}|{j}", NAMA[j], f"{p}|{kel}", r[j], pk, 0)
+    tot = semua[list(KEL)].sum()
+    t.tambah("ID", akar, "", tot.sum(), pct_kotor(tot), 0)
+    for pulau, sub in grup:
+        induk = "ID"
+        if pulau:                                   # tingkat pulau (mode "Ringkasan per pulau")
+            ts = sub[list(KEL)].sum()
+            induk = f"P|{pulau}"
+            t.tambah(induk, pulau, "ID", ts.sum(), pct_kotor(ts), 0)
+        for _, r in sub.iterrows():
+            p, pk = r["prov"], pct_kotor(r)
+            t.tambah(p, p, induk, r[list(KEL)].sum(), pk, 0)
+            for kel in ["Bersih", "Kotor", "Tidak memasak"]:
+                jenis = [j for j, k in KEL.items() if k == kel]
+                t.tambah(f"{p}|{kel}", kel, p, r[jenis].sum(), pk, 0)
+                for j in jenis:
+                    t.tambah(f"{p}|{j}", NAMA[j], f"{p}|{kel}", r[j], pk, 0)
 
+    pos = [w for w, v in zip(t.warna[1:], t.values[1:]) if v > 0] or [0.0]
     fig = go.Figure(go.Treemap(
         ids=t.ids, labels=t.labels, parents=t.parents, values=t.values,
-        branchvalues="total", maxdepth=3,
+        branchvalues="total", maxdepth=3 + (tampilan == PER_PULAU),
         marker=dict(colors=t.warna, colorscale="Cividis",
-                    cmin=min(w for w, v in zip(t.warna[1:], t.values[1:]) if v > 0), cmax=max(t.warna[1:]), showscale=True,
+                    cmin=min(pos), cmax=max(pos), showscale=True,
                     colorbar=dict(title="% bahan bakar kotor<br>(dari RT yang memasak)", ticksuffix="%"),
                     line=dict(width=0.6, color="white")),
         customdata=np.round(t.warna, 1),
         texttemplate="%{label}<br>%{value:,.0f} RT",
         hovertemplate=("<b>%{label}</b><br>Jumlah RT: %{value:,.0f}"
                        "<br>Porsi dari induk: %{percentParent:.1%}"
-                       "<br>% bahan bakar kotor provinsi: %{customdata}%<extra></extra>"),
+                       "<br>% bahan bakar kotor (wilayah ini): %{customdata}%<extra></extra>"),
         pathbar=dict(visible=True, thickness=24),
     ))
     fig.update_layout(
-        title="Rumah tangga menurut jenis bahan bakar utama memasak, 2022 "
-              "(ukuran = jumlah RT; warna = % bahan bakar kotor) - Sumber: BPS",
+        title=f"Bahan bakar utama memasak rumah tangga, 2022: {akar} (Sumber: BPS)",
         margin=dict(t=70, l=10, r=10, b=10), template="plotly_white")
     return fig
 
 
-def grafik_icicle_internet():
+def grafik_icicle_internet(tampilan: str = SEMUA):
     # Sheet2 berisi persen x jumlah RT (skala 100x) -> dibagi 100 agar jadi jumlah RT
     d = _baca_data("internet_2022", ["prov", "pernah_kota", "pernah_desa", "tidak_kota", "tidak_desa"],
                    sheet="Sheet2", skala=100)
     WIL = {"Perkotaan": ("pernah_kota", "tidak_kota"), "Perdesaan": ("pernah_desa", "tidak_desa")}
+    KOL = ["pernah_kota", "pernah_desa", "tidak_kota", "tidak_desa"]
 
+    def pct_pernah(x):
+        pn = x["pernah_kota"] + x["pernah_desa"]
+        return _persen(pn, pn + x["tidak_kota"] + x["tidak_desa"])
+
+    akar, grup = _grup_tampilan(d, tampilan)
+    semua = pd.concat([sub for _, sub in grup])
     t = _Pohon()
-    pernah_n = d["pernah_kota"].sum() + d["pernah_desa"].sum()
-    tidak_n = d["tidak_kota"].sum() + d["tidak_desa"].sum()
-    t.tambah("ID", "Indonesia", "", pernah_n + tidak_n, _persen(pernah_n, pernah_n + tidak_n), 0)
-    for _, r in d.iterrows():
-        p = r["prov"]
-        pp = r["pernah_kota"] + r["pernah_desa"]
-        tt = r["tidak_kota"] + r["tidak_desa"]
-        t.tambah(p, p, "ID", pp + tt, _persen(pp, pp + tt), 0)
-        for w, (a, b) in WIL.items():
-            pw = _persen(r[a], r[a] + r[b])
-            t.tambah(f"{p}|{w}", w, p, r[a] + r[b], pw, 0)
-            t.tambah(f"{p}|{w}|ya", "Pernah akses internet", f"{p}|{w}", r[a], pw, 0)
-            t.tambah(f"{p}|{w}|tidak", "Tidak pernah akses", f"{p}|{w}", r[b], pw, 0)
+    tot = semua[KOL].sum()
+    t.tambah("ID", akar, "", tot.sum(), pct_pernah(tot), 0)
+    for pulau, sub in grup:
+        induk = "ID"
+        if pulau:
+            ts = sub[KOL].sum()
+            induk = f"P|{pulau}"
+            t.tambah(induk, pulau, "ID", ts.sum(), pct_pernah(ts), 0)
+        for _, r in sub.iterrows():
+            p = r["prov"]
+            pp = r["pernah_kota"] + r["pernah_desa"]
+            tt = r["tidak_kota"] + r["tidak_desa"]
+            t.tambah(p, p, induk, pp + tt, _persen(pp, pp + tt), 0)
+            for w, (a, b) in WIL.items():
+                pw = _persen(r[a], r[a] + r[b])
+                t.tambah(f"{p}|{w}", w, p, r[a] + r[b], pw, 0)
+                t.tambah(f"{p}|{w}|ya", "Pernah akses internet", f"{p}|{w}", r[a], pw, 0)
+                t.tambah(f"{p}|{w}|tidak", "Tidak pernah akses", f"{p}|{w}", r[b], pw, 0)
 
+    pos = [w for w, v in zip(t.warna[1:], t.values[1:]) if v > 0] or [0.0]
     fig = go.Figure(go.Icicle(
         ids=t.ids, labels=t.labels, parents=t.parents, values=t.values,
-        branchvalues="total", maxdepth=4,
+        branchvalues="total", maxdepth=4 + (tampilan == PER_PULAU),
         marker=dict(colors=t.warna, colorscale="Viridis",
-                    cmin=min(w for w, v in zip(t.warna[1:], t.values[1:]) if v > 0), cmax=max(t.warna[1:]), showscale=True,
+                    cmin=min(pos), cmax=max(pos), showscale=True,
                     colorbar=dict(title="% RT pernah<br>akses internet", ticksuffix="%"),
                     line=dict(width=0.6, color="white")),
         customdata=np.round(t.warna, 1),
@@ -521,8 +583,7 @@ def grafik_icicle_internet():
         pathbar=dict(visible=True, thickness=24),
     ))
     fig.update_layout(
-        title="Akses internet rumah tangga menurut provinsi dan wilayah, 2022 "
-              "(ukuran = jumlah RT; warna = % pernah akses) - Sumber: BPS",
+        title=f"Akses internet rumah tangga, 2022: {akar} (Sumber: BPS)",
         margin=dict(t=70, l=10, r=10, b=10), template="plotly_white")
     return fig
 

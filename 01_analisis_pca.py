@@ -29,7 +29,7 @@ LABEL = {"pln_gap": "Kesenjangan PLN (log)", "pdrb_log": "PDRB/kapita (log)",
          "bansos_rasio": "KPM bansos per 1.000 pddk", "ipm": "IPM",
          "bb_bersih": "% masak bahan bakar bersih", "internet": "% akses internet",
          "kel_besar": "% keluarga besar", "ppm": "% penduduk miskin", "tpt": "TPT (%)"}
-NAMA_KLASTER = {1: "Maju dan kaya", 2: "Maju, ekonomi menengah",
+_KNAMALASTER = {1: "Maju dan kaya", 2: "Maju, ekonomi menengah",
                 3: "Timur tertinggal", 4: "Tertinggal ekstrem"}
 WARNA = {"Maju dan kaya": "#0072B2", "Maju, ekonomi menengah": "#009E73",
          "Timur tertinggal": "#E69F00", "Tertinggal ekstrem": "#D55E00"}  # ramah buta warna
@@ -169,7 +169,13 @@ def grafik_paralel(out):
 
 def grafik_heatmap(out):
     z = StandardScaler().fit_transform(out[ACTIVE])
-    urut = leaves_list(linkage(z, "ward"))
+    urut = []
+    for k in sorted(out["klaster"].unique()):
+        idx = np.where(out["klaster"].values == k)[0]
+        if len(idx) > 2:
+            idx = idx[leaves_list(linkage(z[idx], "ward"))]
+        urut += list(idx)
+    urut = np.array(urut)
     prov = out["prov"].iloc[urut].tolist()
     kode = out["klaster"].iloc[urut].tolist()
     tip = [NAMA_KLASTER[k] for k in kode]
@@ -187,7 +193,8 @@ def grafik_heatmap(out):
     # heatmap utama
     fig.add_trace(go.Heatmap(z=z[urut].T, x=prov, y=[LABEL[v] for v in ACTIVE],
                              colorscale="RdBu_r", zmid=0,
-                             colorbar=dict(title="z-score<br>(merah = tinggi)", len=0.8, y=0.45),
+                             # colorbar: len=0.55, y=0.3 (ganti pengaturan lama)
+                             colorbar=dict(title="z-score<br>(merah = tinggi)", len=0.55, y=0.3),
                              hovertemplate="%{x}<br>%{y}<br>z = %{z:.2f}<extra></extra>"),
                   row=2, col=1)
     # legenda tipologi (marker bantu)
@@ -198,13 +205,15 @@ def grafik_heatmap(out):
     fig.update_xaxes(showticklabels=False, row=1, col=1)
     fig.update_xaxes(tickangle=90, row=2, col=1)
     fig.update_layout(
-        title="Heatmap terklaster z-score 38 provinsi (Sumber: BPS)",
-        template="plotly_white", height=640, legend_title="Tipologi",
-        margin=dict(b=170),
-        annotations=[dict(
-            text="Merah = nilai tinggi pada variabel itu, bukan 'lebih baik'. "
-                 "Contoh: pada % penduduk miskin merah berarti miskin; pada IPM merah berarti IPM tinggi.",
-            xref="paper", yref="paper", x=0, y=-0.36, showarrow=False, font=dict(size=11))])
+    title="Heatmap terklaster z-score 38 provinsi (Sumber: BPS)",
+    template="plotly_white", height=700, legend_title="Tipologi",
+    legend=dict(x=1.02, y=1, yanchor="top"),
+    margin=dict(b=230),
+    annotations=[dict(
+        text="Merah = nilai tinggi pada variabel itu, bukan 'lebih baik'. "
+             "Contoh: pada % penduduk miskin merah berarti miskin; pada IPM merah berarti IPM tinggi.",
+        xref="paper", yref="paper", x=0, y=0, yanchor="top", yshift=-200,
+        showarrow=False, font=dict(size=11))])
     return fig
 
 

@@ -86,13 +86,13 @@ def html_peta() -> str:
 
 
 @st.cache_data(show_spinner="Menyusun treemap...")
-def fig_treemap():
-    return geo_mod.grafik_treemap_bbm()
+def fig_treemap(tampilan: str):
+    return geo_mod.grafik_treemap_bbm(tampilan)
 
 
 @st.cache_data(show_spinner="Menyusun icicle...")
-def fig_icicle():
-    return geo_mod.grafik_icicle_internet()
+def fig_icicle(tampilan: str):
+    return geo_mod.grafik_icicle_internet(tampilan)
 
 
 def tampil(fig):
@@ -106,92 +106,112 @@ with st.sidebar:
              "peta kab/kota, klaster spasial (LISA), serta tipologi provinsi dari PCA.")
     st.caption("Sumber: BPS (data diolah).")
     st.divider()
+    st.markdown("**Isi halaman (scroll ke bawah)**")
+    st.markdown("1. Ringkasan\n2. Peta dan klaster spasial\n3. Tipologi provinsi (PCA)\n"
+                "4. Hierarchical Visualization")
     st.markdown("**Cara membaca**")
     st.markdown("- Arahkan kursor ke objek untuk detail.\n"
                 "- Peta: pilih layer di kanan atas, klik wilayah untuk zoom, tombol rumah untuk reset.\n"
-                "- Treemap dan icicle: klik kotak untuk drill-down, klik penunjuk posisi di atas untuk naik.")
+                "- Hierarchical Visualization: pilih tampilan lewat dropdown, klik kotak untuk drill-down, "
+                "klik penunjuk posisi di atas untuk naik.")
 
 st.title("Kemiskinan dan Pembangunan Manusia di Indonesia")
 
-tab_ring, tab_peta, tab_pca, tab_rt = st.tabs(
-    ["Ringkasan", "Peta dan klaster spasial", "Tipologi provinsi (PCA)", "Bahan bakar dan internet"])
+# Satu halaman yang di-scroll; tiap bagian dipisah header dan garis pembatas (tanpa tab).
 
-# ---------- TAB 1: RINGKASAN ----------
-with tab_ring:
-    g = muat_kabkota()
-    tab_moran = muat_moran()
-    d, out, load, ve = hitung_pca()
+# ---------- BAGIAN 1: RINGKASAN ----------
+st.header("Ringkasan")
+g = muat_kabkota()
+tab_moran = muat_moran()
+d, out, load, ve = hitung_pca()
 
-    var = geo_mod.VAR_LISA
-    moran_i = float(tab_moran.loc[tab_moran["variabel"] == var, "Moran_I"].iloc[0])
-    n_hot = int((g["lisa_kat"] == "High-High (hotspot)").sum())
-    n_cold = int((g["lisa_kat"] == "Low-Low (coldspot)").sum())
+var = geo_mod.VAR_LISA
+moran_i = float(tab_moran.loc[tab_moran["variabel"] == var, "Moran_I"].iloc[0])
+n_hot = int((g["lisa_kat"] == "High-High (hotspot)").sum())
+n_cold = int((g["lisa_kat"] == "Low-Low (coldspot)").sum())
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Provinsi dianalisis", len(out))
-    c2.metric("Kab/kota", len(g))
-    c3.metric(f"Moran's I ({geo_mod.LABEL[var]})", f"{moran_i:.3f}")
-    c4.metric("Hotspot / coldspot LISA", f"{n_hot} / {n_cold}")
+c1, c2, c3, c4 = st.columns(4)
+c1.metric("Provinsi dianalisis", len(out))
+c2.metric("Kab/kota", len(g))
+c3.metric(f"Moran's I ({geo_mod.LABEL[var]})", f"{moran_i:.3f}")
+c4.metric("Hotspot / coldspot LISA", f"{n_hot} / {n_cold}")
 
+st.markdown(
+    f"Kemiskinan antar kab/kota **mengelompok secara spasial** (Moran's I = {moran_i:.2f}): "
+    f"{n_hot} kab/kota termasuk hotspot (miskin dikelilingi miskin) dan {n_cold} coldspot. "
+    "Di tingkat provinsi, PCA mengelompokkan 38 provinsi ke dalam empat tipologi.")
+
+kiri, kanan = st.columns(2)
+with kiri:
+    st.subheader("Moran's I global")
+    st.dataframe(tab_moran.rename(columns={"variabel": "Variabel", "Moran_I": "Moran's I",
+                                           "z_sim": "z (simulasi)", "p_sim": "p (simulasi)"}),
+                 hide_index=True, use_container_width=True)
+    st.caption("Semua variabel menunjukkan autokorelasi spasial positif (p < 0,05).")
+with kanan:
+    st.subheader("Tipologi provinsi")
+    ukuran = (out.groupby(["klaster", "tipologi"]).size().reset_index(name="Jumlah provinsi")
+                 .sort_values("klaster").drop(columns="klaster")
+                 .rename(columns={"tipologi": "Tipologi"}))
+    st.dataframe(ukuran, hide_index=True, use_container_width=True)
+
+# ---------- BAGIAN 2: PETA & LISA ----------
+st.divider()
+st.header("Peta dan klaster spasial")
+st.subheader("Peta interaktif kab/kota")
+components.html(html_peta(), height=720, scrolling=False)
+
+st.caption("Layer: % penduduk miskin, IPM, TPT, RLS, klaster LISA, dan simbol proporsional.")
+kiri, kanan = st.columns(2)
+g = muat_kabkota()
+gdf = pd.DataFrame(g.drop(columns="geometry"))
+with kiri:
+    tampil(geo_mod.grafik_moran(gdf, geo_mod.VAR_LISA, moran_i))
+with kanan:
+    tampil(geo_mod.grafik_share_ipm(gdf))
+
+# ---------- BAGIAN 3: PCA ----------
+st.divider()
+st.header("Tipologi provinsi (PCA)")
+d, out, load, ve = hitung_pca()
+st.caption(f"PC1 menjelaskan {ve[0]:.1f}% varians dan PC2 {ve[1]:.1f}%; "
+           f"tiga komponen pertama {ve[:3].sum():.1f}%.")
+st.subheader("Biplot")
+tampil(pca_mod.grafik_biplot(out, load, ve))
+st.subheader("Heatmap terklaster")
+tampil(pca_mod.grafik_heatmap(out))
+st.subheader("Koordinat paralel")
+tampil(pca_mod.grafik_paralel(out))
+st.subheader("Korelasi")
+tampil(pca_mod.grafik_korelasi(d))
+
+with st.expander("Loading komponen utama dan daftar provinsi per tipologi"):
+    st.dataframe(load.iloc[:, :3].round(2), use_container_width=True)
+    for k in sorted(out["klaster"].unique()):
+        nama = pca_mod.NAMA_KLASTER[k]
+        st.markdown(f"**{k}. {nama}**: " + ", ".join(out.loc[out["klaster"] == k, "prov"]))
+
+# ---------- BAGIAN 4: HIERARCHICAL VISUALIZATION ----------
+st.divider()
+st.header("Hierarchical Visualization: rumah tangga (2022)")
+tampilan = st.selectbox("Tampilan wilayah", geo_mod.PILIHAN_TAMPILAN,
+                        help="Seluruh Indonesia per provinsi, ringkasan per pulau, atau satu pulau saja.")
+
+st.markdown("#### Bahan bakar utama memasak (treemap)")
+st.caption("Ukuran = jumlah rumah tangga; warna = % rumah tangga yang memakai bahan bakar kotor "
+           "(dari rumah tangga yang memasak).")
+with st.expander("Apa itu bahan bakar bersih dan kotor?"):
     st.markdown(
-        f"Kemiskinan antar kab/kota **mengelompok secara spasial** (Moran's I = {moran_i:.2f}): "
-        f"{n_hot} kab/kota termasuk hotspot (miskin dikelilingi miskin) dan {n_cold} coldspot. "
-        "Di tingkat provinsi, PCA mengelompokkan 38 provinsi ke dalam empat tipologi.")
+        "| Kelompok | Jenis bahan bakar |\n|---|---|\n"
+        "| **Bersih** | Listrik, LPG (gas/elpiji) |\n"
+        "| **Kotor** | Minyak tanah, arang/briket, kayu |\n"
+        "| **Tidak memasak** | Kategori \"Lainnya\" (tidak masuk perhitungan persen kotor) |\n\n"
+        "**% bahan bakar kotor** = kotor / (kotor + bersih) x 100.\n\n"
+        "Bahan bakar kotor menghasilkan asap dan polusi udara dalam ruangan yang berisiko bagi "
+        "kesehatan, terutama perempuan dan anak. Pengelompokan ini sama dengan variabel "
+        "`bb_bersih` (listrik + elpiji) pada analisis PCA.")
+tampil(fig_treemap(tampilan))
 
-    kiri, kanan = st.columns(2)
-    with kiri:
-        st.subheader("Moran's I global")
-        st.dataframe(tab_moran.rename(columns={"variabel": "Variabel", "Moran_I": "Moran's I",
-                                               "z_sim": "z (simulasi)", "p_sim": "p (simulasi)"}),
-                     hide_index=True, use_container_width=True)
-        st.caption("Semua variabel menunjukkan autokorelasi spasial positif (p < 0,05).")
-    with kanan:
-        st.subheader("Tipologi provinsi")
-        ukuran = (out.groupby(["klaster", "tipologi"]).size().reset_index(name="Jumlah provinsi")
-                     .sort_values("klaster").drop(columns="klaster")
-                     .rename(columns={"tipologi": "Tipologi"}))
-        st.dataframe(ukuran, hide_index=True, use_container_width=True)
-
-# ---------- TAB 2: PETA & LISA ----------
-with tab_peta:
-    st.subheader("Peta interaktif kab/kota")
-    components.html(html_peta(), height=720, scrolling=False)
-
-    st.caption("Layer: % penduduk miskin, IPM, TPT, RLS, klaster LISA, dan simbol proporsional.")
-    kiri, kanan = st.columns(2)
-    g = muat_kabkota()
-    gdf = pd.DataFrame(g.drop(columns="geometry"))
-    with kiri:
-        tampil(geo_mod.grafik_moran(gdf, geo_mod.VAR_LISA, moran_i))
-    with kanan:
-        tampil(geo_mod.grafik_share_ipm(gdf))
-
-# ---------- TAB 3: PCA ----------
-with tab_pca:
-    d, out, load, ve = hitung_pca()
-    st.caption(f"PC1 menjelaskan {ve[0]:.1f}% varians dan PC2 {ve[1]:.1f}%; "
-               f"tiga komponen pertama {ve[:3].sum():.1f}%.")
-    t_bi, t_hm, t_pr, t_kr = st.tabs(["Biplot", "Heatmap terklaster", "Koordinat paralel", "Korelasi"])
-    with t_bi:
-        tampil(pca_mod.grafik_biplot(out, load, ve))
-    with t_hm:
-        tampil(pca_mod.grafik_heatmap(out))
-    with t_pr:
-        tampil(pca_mod.grafik_paralel(out))
-    with t_kr:
-        tampil(pca_mod.grafik_korelasi(d))
-
-    with st.expander("Loading komponen utama dan daftar provinsi per tipologi"):
-        st.dataframe(load.iloc[:, :3].round(2), use_container_width=True)
-        for k in sorted(out["klaster"].unique()):
-            nama = pca_mod.NAMA_KLASTER[k]
-            st.markdown(f"**{k}. {nama}**: " + ", ".join(out.loc[out["klaster"] == k, "prov"]))
-
-# ---------- TAB 4: RUMAH TANGGA ----------
-with tab_rt:
-    st.subheader("Bahan bakar utama memasak (treemap)")
-    st.caption("Ukuran = jumlah rumah tangga; warna = % rumah tangga yang memakai bahan bakar kotor.")
-    tampil(fig_treemap())
-    st.subheader("Akses internet rumah tangga (icicle)")
-    st.caption("Ukuran = jumlah rumah tangga; warna = % rumah tangga yang pernah mengakses internet.")
-    tampil(fig_icicle())
+st.markdown("#### Akses internet rumah tangga (icicle)")
+st.caption("Ukuran = jumlah rumah tangga; warna = % rumah tangga yang pernah mengakses internet.")
+tampil(fig_icicle(tampilan))
