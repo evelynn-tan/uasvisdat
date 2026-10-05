@@ -70,6 +70,13 @@ def hitung_pca():
     return d, out, load, pca.explained_variance_ratio_ * 100
 
 
+@st.cache_data(show_spinner="Menghitung elbow dan silhouette...")
+def hitung_metrik():
+    d = pca_mod.variabel_turunan(pca_mod.muat_data())
+    _, skor, _ = pca_mod.jalankan_pca(d, pca_mod.ACTIVE)
+    return pca_mod.metrik_klaster(skor)
+
+
 @st.cache_data(show_spinner="Membaca data kab/kota...")
 def muat_kabkota() -> gpd.GeoDataFrame:
     return gpd.read_file(PROC / "kabkota_lisa.geojson")
@@ -176,6 +183,22 @@ st.header("Tipologi provinsi (PCA)")
 d, out, load, ve = hitung_pca()
 st.caption(f"PC1 menjelaskan {ve[0]:.1f}% varians dan PC2 {ve[1]:.1f}%; "
            f"tiga komponen pertama {ve[:3].sum():.1f}%.")
+st.subheader("Penentuan jumlah komponen (scree plot)")
+kiri, kanan = st.columns([1, 2])
+with kiri:
+    st.dataframe(pca_mod.tabel_pca(ve).head(6).round(2), hide_index=True, use_container_width=True)
+    st.caption("Eigenvalue > 1 (kriteria Kaiser) dan siku pada scree plot dipakai sebagai acuan; "
+               "tiga komponen pertama dipertahankan.")
+with kanan:
+    tampil(pca_mod.grafik_scree(ve, n_pakai=3))
+
+st.subheader("Penentuan jumlah klaster (elbow dan silhouette)")
+met = hitung_metrik()
+k_sil = int(met.loc[met["silhouette"].idxmax(), "k"])
+st.caption(f"Silhouette tertinggi pada k = {k_sil}; jumlah klaster yang dipakai k = {pca_mod.K}. "
+           "Pilihan k dipertimbangkan bersama siku pada grafik elbow dan kemudahan interpretasi.")
+tampil(pca_mod.grafik_penentuan_k(met))
+
 st.subheader("Biplot")
 tampil(pca_mod.grafik_biplot(out, load, ve))
 st.subheader("Heatmap terklaster")

@@ -1,4 +1,4 @@
-﻿"""
+"""
 01_analisis_pca.py
 Olah data provinsi -> PCA -> klaster -> uji sensitivitas -> grafik Plotly.
 Jalankan dari folder proyek:  python 01_analisis_pca.py
@@ -29,10 +29,13 @@ LABEL = {"pln_gap": "Kesenjangan PLN (log)", "pdrb_log": "PDRB/kapita (log)",
          "bansos_rasio": "KPM bansos per 1.000 pddk", "ipm": "IPM",
          "bb_bersih": "% masak bahan bakar bersih", "internet": "% akses internet",
          "kel_besar": "% keluarga besar", "ppm": "% penduduk miskin", "tpt": "TPT (%)"}
-NAMA_KLASTER = {1: "Maju dan kaya", 2: "Maju, ekonomi menengah",
-                3: "Timur tertinggal", 4: "Tertinggal ekstrem"}
-WARNA = {"Maju dan kaya": "#0072B2", "Maju, ekonomi menengah": "#009E73",
-         "Timur tertinggal": "#E69F00", "Tertinggal ekstrem": "#D55E00"}  # ramah buta warna
+NAMA_KLASTER = {1: "Ekonomi kuat (PDRB tinggi)",
+                2: "Mendekati rata-rata nasional",
+                3: "Kemiskinan dan keluarga besar",
+                4: "IPM dan akses dasar terendah"}
+WARNA = {"Ekonomi kuat (PDRB tinggi)": "#0072B2", "Mendekati rata-rata nasional": "#009E73",
+         "Kemiskinan dan keluarga besar": "#E69F00",
+         "IPM dan akses dasar terendah": "#D55E00"}  # ramah buta warna
 
 
 # ---------- 1. BACA & BERSIHKAN ----------
@@ -225,6 +228,77 @@ def grafik_korelasi(d):
     return fig
 
 
+# ---------- 4b. PENENTUAN JUMLAH PC (SCREE) DAN KLASTER (ELBOW, SILHOUETTE) ----------
+def tabel_pca(ve) -> pd.DataFrame:
+    """Eigenvalue, varians, dan varians kumulatif tiap komponen (PCA dari matriks korelasi)."""
+    n = len(ve)
+    return pd.DataFrame({"Komponen": [f"PC{i+1}" for i in range(n)],
+                         "Eigenvalue": np.asarray(ve) / 100 * len(ACTIVE),
+                         "Varians (%)": np.asarray(ve),
+                         "Kumulatif (%)": np.cumsum(ve)})
+
+
+def grafik_scree(ve, n_pakai: int = 3):
+    t = tabel_pca(ve)
+    warna = ["#0072B2" if i < n_pakai else "#B8B8B8" for i in range(len(t))]
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=t["Komponen"], y=t["Varians (%)"], marker_color=warna, name="Varians (%)",
+                         text=[f"{v:.1f}%" for v in t["Varians (%)"]], textposition="outside",
+                         customdata=t[["Eigenvalue", "Kumulatif (%)"]].values,
+                         hovertemplate=("%{x}<br>Varians: %{y:.1f}%<br>Eigenvalue: %{customdata[0]:.2f}"
+                                        "<br>Kumulatif: %{customdata[1]:.1f}%<extra></extra>")))
+    fig.add_trace(go.Scatter(x=t["Komponen"], y=t["Varians (%)"], mode="lines+markers",
+                             line=dict(color="#333", width=1.5), marker=dict(size=6), name="Garis scree",
+                             hoverinfo="skip"))
+    fig.add_trace(go.Scatter(x=t["Komponen"], y=t["Kumulatif (%)"], mode="lines+markers",
+                             line=dict(color="#D55E00", dash="dot"), name="Kumulatif (%)",
+                             hovertemplate="%{x}<br>Kumulatif: %{y:.1f}%<extra></extra>"))
+    kaiser = 100 / len(ACTIVE)                      # eigenvalue = 1  <=>  varians = 100/p persen
+    fig.add_hline(y=kaiser, line_dash="dash", line_color="#009E73",
+                  annotation_text=f"Kaiser: eigenvalue = 1 ({kaiser:.1f}%)", annotation_position="top right")
+    fig.update_layout(title=f"Scree plot PCA (batang biru = {n_pakai} komponen yang dipakai)",
+                      yaxis_title="Persentase varians dijelaskan (%)", xaxis_title="Komponen utama",
+                      yaxis_range=[0, 108], template="plotly_white",
+                      legend=dict(orientation="h", y=-0.2))
+    return fig
+
+
+def metrik_klaster(skor: np.ndarray, kmax: int = 10) -> pd.DataFrame:
+    """Total within-cluster SS (elbow) dan rata-rata silhouette untuk k = 1..kmax pada PC1-PC3."""
+    sc = skor[:, :3]
+    baris = []
+    for k in range(1, kmax + 1):
+        km = KMeans(k, n_init=100, random_state=SEED).fit(sc)
+        sil = silhouette_score(sc, km.labels_) if k > 1 else np.nan
+        baris.append({"k": k, "wss": km.inertia_, "silhouette": sil})
+    return pd.DataFrame(baris)
+
+
+def grafik_penentuan_k(met: pd.DataFrame):
+    fig = make_subplots(rows=1, cols=2, horizontal_spacing=0.12,
+                        subplot_titles=("(a) Metode Elbow", "(b) Metode Silhouette"))
+    fig.add_trace(go.Scatter(x=met["k"], y=met["wss"], mode="lines+markers", showlegend=False,
+                             line=dict(color="#0072B2"),
+                             hovertemplate="k = %{x}<br>WSS = %{y:.1f}<extra></extra>"), row=1, col=1)
+    m2 = met.dropna(subset=["silhouette"])
+    fig.add_trace(go.Scatter(x=m2["k"], y=m2["silhouette"], mode="lines+markers", showlegend=False,
+                             line=dict(color="#0072B2"),
+                             hovertemplate="k = %{x}<br>Silhouette = %{y:.3f}<extra></extra>"), row=1, col=2)
+    k_best = int(m2.loc[m2["silhouette"].idxmax(), "k"])
+    fig.add_trace(go.Scatter(x=[k_best], y=[m2["silhouette"].max()], mode="markers", showlegend=False,
+                             marker=dict(symbol="star", size=14, color="#E69F00"),
+                             hovertemplate=f"Silhouette tertinggi: k = {k_best}<extra></extra>"), row=1, col=2)
+    for c in (1, 2):
+        fig.add_vline(x=K, line_dash="dash", line_color="#D55E00", row=1, col=c,
+                      annotation_text=f"k dipakai = {K}", annotation_position="top")
+    fig.update_xaxes(title_text="Jumlah klaster (k)", dtick=1)
+    fig.update_yaxes(title_text="Total within sum of squares", row=1, col=1)
+    fig.update_yaxes(title_text="Rata-rata silhouette width", row=1, col=2)
+    fig.update_layout(title="Penentuan jumlah klaster pada skor PC1-PC3 (bintang = silhouette tertinggi)",
+                      template="plotly_white", margin=dict(t=100))
+    return fig
+
+
 # ---------- 5. MAIN ----------
 def main():
     d = muat_data()
@@ -236,6 +310,12 @@ def main():
     print("\nVarians (%):", np.round(ve[:4], 1), "| kumulatif 3 PC:", round(ve[:3].sum(), 1))
     print("Eigenvalue:", np.round(ve[:4] / 100 * len(ACTIVE), 2))   # dari matriks korelasi, sama dengan R
     print(load.iloc[:, :3].round(2))
+
+    print("\n--- Scree (jumlah PC) ---")
+    print(tabel_pca(ve).head(5).round(2).to_string(index=False))
+    met = metrik_klaster(skor)
+    print("\n--- Elbow dan silhouette (jumlah klaster) ---")
+    print(met.round(3).to_string(index=False))
 
     klaster, km = klasterkan(skor, K)
     out = d.copy()
@@ -260,6 +340,8 @@ def main():
     grafik_paralel(out).write_html(OUT / "paralel.html")
     grafik_heatmap(out).write_html(OUT / "heatmap.html")
     grafik_korelasi(d).write_html(OUT / "korelasi.html")
+    grafik_scree(ve).write_html(OUT / "scree.html")
+    grafik_penentuan_k(met).write_html(OUT / "elbow_silhouette.html")
     print("\nSelesai. File ada di data/processed/")
 
 
