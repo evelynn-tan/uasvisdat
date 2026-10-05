@@ -1,4 +1,4 @@
-"""
+﻿"""
 01_analisis_pca.py
 Olah data provinsi -> PCA -> klaster -> uji sensitivitas -> grafik Plotly.
 Jalankan dari folder proyek:  python 01_analisis_pca.py
@@ -29,7 +29,7 @@ LABEL = {"pln_gap": "Kesenjangan PLN (log)", "pdrb_log": "PDRB/kapita (log)",
          "bansos_rasio": "KPM bansos per 1.000 pddk", "ipm": "IPM",
          "bb_bersih": "% masak bahan bakar bersih", "internet": "% akses internet",
          "kel_besar": "% keluarga besar", "ppm": "% penduduk miskin", "tpt": "TPT (%)"}
-_KNAMALASTER = {1: "Maju dan kaya", 2: "Maju, ekonomi menengah",
+NAMA_KLASTER = {1: "Maju dan kaya", 2: "Maju, ekonomi menengah",
                 3: "Timur tertinggal", 4: "Tertinggal ekstrem"}
 WARNA = {"Maju dan kaya": "#0072B2", "Maju, ekonomi menengah": "#009E73",
          "Timur tertinggal": "#E69F00", "Tertinggal ekstrem": "#D55E00"}  # ramah buta warna
