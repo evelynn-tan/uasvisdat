@@ -11,6 +11,7 @@ Struktur folder (semua di repo yang sama):
     data/raw/internet_2022.xlsx       (dipakai icicle)
     data/processed/kabkota_lisa.geojson, moran_global.csv   (hasil skrip 02)
     data/processed/provinsi_terolah.csv                     (hasil skrip 01)
+    .streamlit/config.toml            (tema: latar abu-abu muda)
 """
 import importlib.util
 import sys
@@ -55,6 +56,123 @@ pca_mod = muat_modul("01_analisis_pca.py", "analisis_pca")
 geo_mod = muat_modul("02_geospasial_lisa.py", "geospasial_lisa")
 geo_mod.DATA = RAW            # path treemap/icicle mengikuti folder repo, bukan D:/uas
 CFG = {"displaylogo": False, "scrollZoom": True}
+
+
+# ---------- PENAMAAN KOMPONEN UTAMA ----------
+# Nama PC1 dan PC2 mengikuti judul sumbu biplot di skrip 01. PC3 (None) diberi nama otomatis dari
+# variabel ber-loading terbesar; isi dengan nama sendiri setelah memeriksa tabel loading.
+NAMA_PC = {
+    "PC1": "Tingkat kemajuan umum (pembangunan manusia, ekonomi, dan akses dasar)",
+    "PC2": "Struktur keluarga dan ketenagakerjaan (keluarga besar dan TPT)",
+    "PC3": None,
+}
+AMBANG_LOADING = 0.30      # |loading| minimum agar variabel dianggap ikut mencirikan komponen
+
+
+def ringkas_pc(load: pd.DataFrame, ve) -> pd.DataFrame:
+    baris = []
+    for j in range(3):
+        pc = f"PC{j + 1}"
+        s = load[pc]
+        plus = s[s >= AMBANG_LOADING].sort_values(ascending=False)
+        minus = s[s <= -AMBANG_LOADING].sort_values()
+        nama = NAMA_PC.get(pc) or f"Dimensi {pca_mod.LABEL[s.abs().idxmax()]}"
+        fmt = lambda x: ", ".join(f"{pca_mod.LABEL[v]} ({b:+.2f})" for v, b in x.items()) or "-"
+        baris.append({"Komponen": pc, "Varians (%)": round(float(ve[j]), 1), "Nama aspek": nama,
+                      "Searah skor komponen": fmt(plus), "Berlawanan arah": fmt(minus)})
+    return pd.DataFrame(baris)
+
+
+# ---------- DAFTAR DATA YANG DIPAKAI ----------
+TAHUN = "2024"            # tahun data provinsi dan kab/kota (data hierarki memakai 2022)
+KOLOM_DATA = ["Variabel", "Kolom data", "Keterangan", "Satuan", "Tahun", "Peran dalam analisis"]
+AKTIF = "Variabel aktif PCA"
+
+DATA_PROVINSI = pd.DataFrame([
+    # variabel aktif PCA yang dipakai langsung
+    ("IPM", "IPM", "Indeks Pembangunan Manusia", "indeks (0-100)", TAHUN, AKTIF),
+    ("% penduduk miskin", "PPM", "Persentase penduduk miskin", "%", TAHUN, AKTIF),
+    ("Tingkat pengangguran terbuka", "TPT", "Persentase pengangguran terbuka", "%", TAHUN, AKTIF),
+    ("% akses internet", "Internet", "Rumah tangga yang pernah mengakses internet dalam 3 bulan terakhir",
+     "% rumah tangga", TAHUN, AKTIF),
+    ("% keluarga besar", "Keluarga Besar", "Persentase keluarga besar", "%", TAHUN, AKTIF),
+    # variabel aktif PCA hasil turunan
+    ("Kesenjangan PLN (log)", "pln_gap", "ln(100 - PLN + 1); makin tinggi = makin tertinggal",
+     "ln (indeks)", TAHUN, AKTIF + " (turunan dari PLN)"),
+    ("PDRB per kapita (log)", "pdrb_log", "ln(PDRB per kapita dalam juta rupiah)",
+     "ln (juta rupiah)", TAHUN, AKTIF + " (turunan dari PDRB per Capita)"),
+    ("KPM bansos per 1.000 penduduk", "bansos_rasio", "Jumlah KPM dibagi jumlah penduduk (ribu jiwa)",
+     "KPM per 1.000 penduduk", TAHUN, AKTIF + " (turunan dari Bansos dan Penduduk)"),
+    ("% masak bahan bakar bersih", "bb_bersih", "Listrik + elpiji", "% rumah tangga", TAHUN,
+     AKTIF + " (turunan dari Bahan Bakar Listrik dan Elpiji)"),
+    # data mentah pembentuk variabel turunan
+    ("Akses listrik PLN", "PLN", "Persentase akses listrik PLN", "%", TAHUN, "Data mentah (bahan kesenjangan PLN)"),
+    ("PDRB per kapita", "PDRB per Capita", "Produk domestik regional bruto per penduduk", "ribu rupiah", TAHUN,
+     "Data mentah (bahan PDRB log)"),
+    ("KPM bansos pangan", "Bansos", "Jumlah keluarga penerima manfaat bansos pangan", "KPM", TAHUN,
+     "Data mentah (pembilang rasio bansos)"),
+    ("Jumlah penduduk", "Penduduk", "Penduduk provinsi", "ribu jiwa", TAHUN, "Data mentah (penyebut rasio bansos)"),
+    ("Bahan bakar listrik", "Bahan Bakar Listrik", "Rumah tangga memasak dengan listrik", "% rumah tangga", TAHUN,
+     "Data mentah (bahan bakar bersih)"),
+    ("Bahan bakar elpiji", "Bahan Bakar Elpiji", "Rumah tangga memasak dengan elpiji", "% rumah tangga", TAHUN,
+     "Data mentah (bahan bakar bersih)"),
+], columns=KOLOM_DATA)
+
+DATA_KABKOTA = pd.DataFrame([
+    ("% penduduk miskin", "PPM", "Persentase penduduk miskin", "%", TAHUN,
+     "Variabel utama LISA; Moran's I; layer peta"),
+    ("Tingkat pengangguran terbuka", "TPT", "Persentase pengangguran terbuka", "%", TAHUN,
+     "Moran's I; layer peta"),
+    ("IPM", "IPM", "Indeks Pembangunan Manusia", "indeks (0-100)", TAHUN,
+     "Moran's I; layer peta; kategori BPS (< 60, 60-69,99, 70-79,99, >= 80)"),
+    ("Rata-rata lama sekolah", "RLS", "Rata-rata lama sekolah penduduk", "tahun", TAHUN,
+     "Moran's I; layer peta; kategori jenjang pendidikan"),
+    ("Jumlah penduduk", "Jumlah Penduduk", "Penduduk kab/kota", "jiwa", TAHUN,
+     "Tooltip peta; grafik sebaran menurut kategori IPM"),
+    ("Jumlah penduduk miskin", "Jumlah Penduduk Miskin", "Penduduk miskin kab/kota", "jiwa", TAHUN,
+     "Ukuran lingkaran proporsional; grafik sebaran"),
+    ("Kode dan nama wilayah", "KDPKAB, KDPPUM, WADMPR, Nama_Wilayah", "Kode kab/kota, kode provinsi, provinsi, nama kab/kota",
+     "teks", "-", "Penghubung data dengan peta; tooltip"),
+    ("Batas wilayah", "geometry (peta digital)", "514 poligon kab/kota", "poligon", "-",
+     "Dasar peta dan bobot spasial Queen"),
+    ("Klaster LISA", "lisa_kat", f"Dari PPM; {geo_mod.PERM} permutasi, taraf nyata {geo_mod.ALPHA}", "kategori", TAHUN,
+     "Hasil olahan: High-High, Low-Low, Low-High, High-Low, tidak signifikan"),
+], columns=KOLOM_DATA)
+
+DATA_HIERARKI = pd.DataFrame([
+    ("Listrik", "Listrik", "Rumah tangga memasak dengan listrik (bersih)", "rumah tangga", "2022", f"Treemap: ukuran (jumlah RT)"),
+    ("LPG", "Gas/Elpiji", "Rumah tangga memasak dengan LPG/elpiji (bersih)", "rumah tangga", "2022", "Treemap: ukuran (jumlah RT)"),
+    ("Minyak tanah", "Minyak Tanah", "Rumah tangga memasak dengan minyak tanah (kotor)", "rumah tangga", "2022",
+     "Treemap: ukuran (jumlah RT)"),
+    ("Arang/briket", "Arang/Briket", "Rumah tangga memasak dengan arang atau briket (kotor)", "rumah tangga", "2022",
+     "Treemap: ukuran (jumlah RT)"),
+    ("Kayu", "Kayu", "Rumah tangga memasak dengan kayu bakar (kotor)", "rumah tangga", "2022", "Treemap: ukuran (jumlah RT)"),
+    ("Lainnya (tidak memasak)", "Lainnya", "Rumah tangga yang tidak memasak", "rumah tangga", "2022",
+     "Treemap: ukuran; tidak masuk hitungan % kotor"),
+    ("% bahan bakar kotor", "(dihitung)", "Kotor / (kotor + bersih) dari rumah tangga yang memasak", "%", "2022",
+     "Treemap: warna (% kotor)"),
+    ("Pernah akses internet, perkotaan", "Internet / Perkotaan", "Rumah tangga perkotaan yang pernah mengakses internet",
+     "rumah tangga", "2022", "Icicle: ukuran (jumlah RT)"),
+    ("Pernah akses internet, perdesaan", "Internet / Perdesaan", "Rumah tangga perdesaan yang pernah mengakses internet",
+     "rumah tangga", "2022", "Icicle: ukuran (jumlah RT)"),
+    ("Tidak pernah akses, perkotaan", "Tidak Pernah Akses Internet / Perkotaan",
+     "Rumah tangga perkotaan yang tidak pernah mengakses internet", "rumah tangga", "2022", "Icicle: ukuran (jumlah RT)"),
+    ("Tidak pernah akses, perdesaan", "Tidak Pernah Akses Internet / Perdesaan",
+     "Rumah tangga perdesaan yang tidak pernah mengakses internet", "rumah tangga", "2022", "Icicle: ukuran (jumlah RT)"),
+    ("% pernah akses internet", "(dihitung)", "Pernah akses / (pernah + tidak pernah), per provinsi dan wilayah", "%",
+     "2022", "Icicle: warna (% pernah akses)"),
+], columns=KOLOM_DATA)
+
+PILIHAN_DATA = {
+    "Tingkat provinsi (PCA dan tipologi)": (
+        DATA_PROVINSI, "38 provinsi. Sembilan variabel aktif PCA (lima langsung, empat hasil turunan); sisanya data mentah "
+                       "pembentuk variabel turunan."),
+    "Tingkat kabupaten/kota (peta dan LISA)": (
+        DATA_KABKOTA, "514 kab/kota; bobot spasial Queen (row-standardized), pulau disambungkan ke tetangga terdekat."),
+    "Hierarchical Visualization (rumah tangga)": (
+        DATA_HIERARKI, "34 provinsi (provinsi pemekaran Papua belum tersedia). Sumber Excel berupa persentase dan jumlah "
+                       "rumah tangga; jumlah rumah tangga per kategori dihitung dari keduanya."),
+}
 
 
 # ---------- DATA (di-cache supaya tidak dihitung ulang tiap interaksi) ----------
@@ -103,6 +221,7 @@ def fig_icicle(tampilan: str):
 
 
 def tampil(fig):
+    fig.update_layout(paper_bgcolor="rgba(0,0,0,0)")      # menyatu dengan latar halaman (abu-abu muda)
     st.plotly_chart(fig, use_container_width=True, config=CFG)
 
 
@@ -114,8 +233,8 @@ with st.sidebar:
     st.caption("Sumber: BPS (data diolah).")
     st.divider()
     st.markdown("**Isi halaman (scroll ke bawah)**")
-    st.markdown("1. Ringkasan\n2. Peta dan klaster spasial\n3. Tipologi provinsi (PCA)\n"
-                "4. Hierarchical Visualization")
+    st.markdown("1. Ringkasan\n2. Data yang digunakan\n3. Peta dan klaster spasial\n"
+                "4. Tipologi provinsi (PCA)\n5. Hierarchical Visualization")
     st.markdown("**Cara membaca**")
     st.markdown("- Arahkan kursor ke objek untuk detail.\n"
                 "- Peta: pilih layer di kanan atas, klik wilayah untuk zoom, tombol rumah untuk reset.\n"
@@ -162,7 +281,16 @@ with kanan:
                  .rename(columns={"tipologi": "Tipologi"}))
     st.dataframe(ukuran, hide_index=True, use_container_width=True)
 
-# ---------- BAGIAN 2: PETA & LISA ----------
+# ---------- BAGIAN 2: DATA YANG DIGUNAKAN ----------
+st.divider()
+st.header("Data yang digunakan")
+pilih_data = st.selectbox("Pilih kelompok data", list(PILIHAN_DATA),
+                          help="Variabel, satuan, dan tahun data untuk tiap bagian dashboard.")
+tabel_data, catatan_data = PILIHAN_DATA[pilih_data]
+st.dataframe(tabel_data, hide_index=True, use_container_width=True)
+st.caption(catatan_data + " Sumber: BPS (data diolah).")
+
+# ---------- BAGIAN 3: PETA & LISA ----------
 st.divider()
 st.header("Peta dan klaster spasial")
 st.subheader("Peta interaktif kab/kota")
@@ -177,7 +305,7 @@ with kiri:
 with kanan:
     tampil(geo_mod.grafik_share_ipm(gdf))
 
-# ---------- BAGIAN 3: PCA ----------
+# ---------- BAGIAN 4: PCA ----------
 st.divider()
 st.header("Tipologi provinsi (PCA)")
 d, out, load, ve = hitung_pca()
@@ -199,6 +327,18 @@ st.caption(f"Silhouette tertinggi pada k = {k_sil}; jumlah klaster yang dipakai 
            "Pilihan k dipertimbangkan bersama siku pada grafik elbow dan kemudahan interpretasi.")
 tampil(pca_mod.grafik_penentuan_k(met))
 
+st.subheader("Kesimpulan: penamaan komponen utama")
+ring = ringkas_pc(load, ve)
+st.dataframe(ring, hide_index=True, use_container_width=True)
+st.markdown(
+    f"Tiga komponen pertama menjelaskan **{ve[:3].sum():.1f}%** varians dan dinamai menurut variabel "
+    f"dengan |loading| ≥ {AMBANG_LOADING:.2f}: "
+    + "; ".join(f"**{r['Komponen']}** = {r['Nama aspek'].lower()}" for _, r in ring.iterrows())
+    + ". Skor tinggi pada suatu komponen berarti provinsi tinggi pada variabel searah dan rendah pada "
+      "variabel berlawanan arah.")
+with st.expander("Tabel loading lengkap"):
+    st.dataframe(load.iloc[:, :3].rename(index=pca_mod.LABEL).round(2), use_container_width=True)
+
 st.subheader("Biplot")
 tampil(pca_mod.grafik_biplot(out, load, ve))
 st.subheader("Heatmap terklaster")
@@ -208,13 +348,12 @@ tampil(pca_mod.grafik_paralel(out))
 st.subheader("Korelasi")
 tampil(pca_mod.grafik_korelasi(d))
 
-with st.expander("Loading komponen utama dan daftar provinsi per tipologi"):
-    st.dataframe(load.iloc[:, :3].round(2), use_container_width=True)
+with st.expander("Daftar provinsi per tipologi"):
     for k in sorted(out["klaster"].unique()):
         nama = pca_mod.NAMA_KLASTER[k]
         st.markdown(f"**{k}. {nama}**: " + ", ".join(out.loc[out["klaster"] == k, "prov"]))
 
-# ---------- BAGIAN 4: HIERARCHICAL VISUALIZATION ----------
+# ---------- BAGIAN 5: HIERARCHICAL VISUALIZATION ----------
 st.divider()
 st.header("Hierarchical Visualization: rumah tangga (2022)")
 tampilan = st.selectbox("Tampilan wilayah", geo_mod.PILIHAN_TAMPILAN,
